@@ -8,6 +8,8 @@ import org.example.springbootdemo.entity.Alert;
 import org.example.springbootdemo.entity.AlertRule;
 import org.example.springbootdemo.mapper.AlertMapper;
 import org.example.springbootdemo.mapper.AlertRuleMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +24,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 public class AlertService {
 
+    private static final Logger log = LoggerFactory.getLogger(AlertService.class);
+
     @Autowired
     private AlertRuleMapper alertRuleMapper;
 
@@ -34,16 +38,57 @@ public class AlertService {
     /** 规则缓存（线程安全），避免每次任务都查库 */
     private volatile List<AlertRule> ruleCache = new CopyOnWriteArrayList<>();
 
+    /**
+     * 规则缓存是否已成功加载。
+     * 为 false 表示启动时未能从数据库读到规则——应用仍可运行，但**预警匹配会静默失效**，
+     * 每次分析都不会产生任何预警工单，必须排查。
+     */
+    private volatile boolean ruleCacheReady = false;
+
+    /** 是否已经就"规则缓存不可用"告警过，避免批量分析时刷屏 */
+    private volatile boolean staleWarned = false;
+
+    /**
+     * 启动时加载规则缓存。
+     *
+     * <p>这里刻意<b>不</b>让异常向上抛出：数据库暂时不可用不应该导致整个应用起不来。
+     * 代价是预警功能会静默降级，因此失败时打一条醒目的 ERROR 日志，方便第一时间发现。
+     */
     @PostConstruct
     public void loadRules() {
-        refreshRules();
+        try {
+            refreshRules();
+            log.info("[预警规则] 规则缓存加载完成，生效规则 {} 条", ruleCache.size());
+        } catch (Exception e) {
+            ruleCache = new CopyOnWriteArrayList<>();
+            ruleCacheReady = false;
+            log.error("================================================================");
+            log.error("[预警规则] 规则缓存加载失败！应用将继续启动，但**预警功能已失效**：");
+            log.error("[预警规则] 后续所有分析任务都不会产生预警工单，直到规则被成功加载。");
+            log.error("[预警规则] 失败原因: {}", e.toString());
+            log.error("[预警规则] 请检查数据库连接与 alert_rule 表，修复后重启应用，");
+            log.error("[预警规则] 或调用 AlertService.refreshRules() 重载规则。");
+            log.error("================================================================");
+        }
     }
 
-    /** 刷新规则缓存（规则变更时调用） */
+    /** 刷新规则缓存（规则变更时调用；也可用于启动失败后的手动重载） */
     public void refreshRules() {
         LambdaQueryWrapper<AlertRule> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AlertRule::getEnabled, 1);
         ruleCache = new CopyOnWriteArrayList<>(alertRuleMapper.selectList(wrapper));
+        ruleCacheReady = true;
+        staleWarned = false;
+    }
+
+    /** 当前生效的规则条数（供健康检查/排障使用） */
+    public int getRuleCount() {
+        return ruleCache.size();
+    }
+
+    /** 规则缓存是否已成功加载（供健康检查/排障使用） */
+    public boolean isRuleCacheReady() {
+        return ruleCacheReady;
     }
 
     /**
@@ -51,6 +96,22 @@ public class AlertService {
      */
     public void checkAndTriggerAlerts(AnalysisContext context) {
         List<AlertRule> rules = ruleCache;
+
+        if (rules.isEmpty()) {
+            // 规则为空有两种可能：启动时加载失败（故障），或库里确实没有启用的规则（配置问题）。
+            // 两者都意味着预警不会触发，只在首次出现时告警一次，避免批量分析刷屏。
+            if (!staleWarned) {
+                staleWarned = true;
+                if (ruleCacheReady) {
+                    log.warn("[预警规则] 当前没有任何启用的预警规则，任务 {} 不会产生预警工单；"
+                            + "请确认 alert_rule 表中的规则已置 enabled=1。", context.getTaskId());
+                } else {
+                    log.warn("[预警规则] 规则缓存不可用（启动时加载失败），任务 {} 未执行预警匹配；"
+                            + "预警功能处于失效状态，详见启动日志中的 ERROR 详情。", context.getTaskId());
+                }
+            }
+            return;
+        }
 
         BorrowerData data = context.getBorrowerData();
         String grade = context.getRiskGrade();

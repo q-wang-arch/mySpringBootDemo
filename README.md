@@ -244,6 +244,19 @@ openssl rand -base64 24
 curl http://localhost:8080/api/hello
 ```
 
+**常见启动报错**
+
+| 报错信息 | 原因 | 处理 |
+|---------|------|------|
+| `Access denied for user 'root'@'localhost' (using password: YES)` | `DB_PASSWORD` 的值与 MySQL 实际密码不符 | 注意别把**引号**、**尾随空格**一起填进环境变量；用 MySQL 客户端手工连一次确认密码 |
+| `Access denied ... (using password: NO)` | 该账号设有密码但没传 | 补上 `DB_PASSWORD` |
+| `Could not resolve placeholder 'DB_PASSWORD'` | 环境变量完全没配 | 检查是否填在 `Environment variables` 而不是 `VM options` |
+| 日志出现 `[预警规则] 规则缓存加载失败` | 数据库连不上 | 应用**仍会启动**，但预警功能失效，需修复后重启 |
+
+> **数据库不可用不再导致启动失败**：`AlertService` 加载预警规则失败时只打 ERROR 日志并保持规则缓存为空。
+> 这样本地只想调接口、验鉴权时不必先连库；但线上必须盯住这条 ERROR——
+> 规则缓存为空意味着所有分析都不会产生预警工单。可通过 `AlertService.getRuleCount()` / `isRuleCacheReady()` 做健康检查。
+
 ### 4. 启动前端
 
 ```bash
@@ -390,6 +403,10 @@ curl -i -X POST -H "X-Auth-Token: $APP_TOKEN_RISK_APPROVER" \
 ```bash
 ./mvnw test -Dtest=AuthInterceptorTest
 ```
+
+> 上表的手工命令与单元测试均已在真实环境跑通（MySQL 8.0.19 + `springbootdemo` 库，JDK 1.8）：
+> 无令牌 / 错令牌返回 401，审批人处置预警返回 403，`/api/hello` 返回 200，
+> 管理员携带有效令牌可正常拿到任务与报告数据。
 
 ### 边界说明
 
