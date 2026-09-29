@@ -219,6 +219,12 @@ APP_TOKEN_SYS_ADMIN=自己生成的一串随机值
 
 操作要点（都是实际踩过的坑）：
 
+- **必须填 `Environment variables`，不要填到 `Active profiles`**。填错的典型症状是启动日志出现
+  `The following 1 profile is active: "DB_PASSWORD=123456;APP_TOKEN_..."`，
+  命令行里能看到 `-Dspring.profiles.active=DB_PASSWORD=...`——Spring 把这一整串当成了一个「profile 名」，
+  变量实际**一个都没生效**。
+- **找不到 `Environment variables` 输入框**：新版 IDEA 默认隐藏该字段，
+  需点 `Modify options`（快捷键 `Alt+M`）→ 勾选 `Environment variables` 才会出现。
 - 该输入框支持 **`KEY=value;KEY2=value2` 分号分隔**，上面五条可以整块粘贴进去；
   也可点输入框右侧图标用表格逐行录入，更不容易出错。
 - **不要给值加引号**。写成 `DB_PASSWORD="123456"` 时，真实密码会变成含引号的 8 位字符串，
@@ -229,6 +235,19 @@ APP_TOKEN_SYS_ADMIN=自己生成的一串随机值
   IDEA 只在进程启动时读取一次系统环境变量，"Stop → Re-run" 是不够的。
 - 只跑前端看效果时，**最少只需要 `APP_TOKEN_RISK_ADMIN` 一个**；
   要演示 403（角色不足）再加 `APP_TOKEN_RISK_APPROVER`，要模拟源头系统推送再加 `APP_TOKEN_API_CLIENT`。
+
+**备选：填在 `VM options` 里**
+
+`VM options` 框默认可见，不用去 `Modify options` 里找。用 `-D` 前缀写成 Java 系统属性即可：
+
+```
+-DDB_PASSWORD=你的MySQL密码 -DAPP_TOKEN_RISK_ADMIN=随机值 -DAPP_TOKEN_RISK_APPROVER=随机值 -DAPP_TOKEN_API_CLIENT=随机值 -DAPP_TOKEN_SYS_ADMIN=随机值
+```
+
+Java 系统属性的优先级**高于**操作系统环境变量，`${APP_TOKEN_RISK_ADMIN:}` 这类占位符同样能解析到（已实测）。
+
+> 注意：写在 `VM options` 里的值会出现在进程启动命令行中（可能落入日志或进程列表），
+> 敏感性高于环境变量，**只建议本地开发使用**。
 
 生成随机令牌（任选一种）：
 
