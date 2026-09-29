@@ -1,6 +1,8 @@
 package org.example.springbootdemo.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.example.springbootdemo.auth.RequireRoles;
+import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
 import org.example.springbootdemo.dto.BorrowerData;
 import org.example.springbootdemo.entity.AnalysisTask;
@@ -20,6 +22,8 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/agent")
+// 类级默认约束：任务查询类接口仅对内部三类角色开放，"接口调用方"不在其列
+@RequireRoles({Roles.RISK_ADMIN, Roles.RISK_APPROVER, Roles.SYS_ADMIN})
 public class AgentController {
 
     @Autowired
@@ -34,8 +38,12 @@ public class AgentController {
     /**
      * POST /api/agent/ingest
      * 接收源头系统推送的贷后数据，触发智能体分析流程
+     *
+     * <p>方法级注解覆盖类级约束：本接口额外允许"接口调用方"（源头系统），
+     * 以 API_CLIENT 身份通过 X-Auth-Token 或 Bearer 令牌调用。
      */
     @PostMapping("/ingest")
+    @RequireRoles({Roles.API_CLIENT, Roles.RISK_ADMIN, Roles.SYS_ADMIN})
     public ApiResponse ingest(@RequestBody BorrowerData data) {
         try {
             String taskId = agentIngestService.ingest(data);

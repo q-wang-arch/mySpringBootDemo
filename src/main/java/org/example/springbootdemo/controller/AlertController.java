@@ -1,6 +1,8 @@
 package org.example.springbootdemo.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.example.springbootdemo.auth.RequireRoles;
+import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
 import org.example.springbootdemo.entity.Alert;
 import org.example.springbootdemo.mapper.AlertMapper;
@@ -17,6 +19,8 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/alert")
+// 查询类接口：内部三类角色均可查看
+@RequireRoles({Roles.RISK_ADMIN, Roles.RISK_APPROVER, Roles.SYS_ADMIN})
 public class AlertController {
 
     @Autowired
@@ -75,8 +79,13 @@ public class AlertController {
      * POST /api/alert/{alertId}/handle
      * 处置预警工单
      * body: { handler, handleComment }
+     *
+     * <p>按 docs/03 的角色定义，"处置预警"属于风险管理员；
+     * 风险审批人只负责审批处置结果（该接口尚未实现），因此这里用方法级注解把处置权收窄，
+     * 审批人调用会得到 403——这不是缺陷，而是授权生效的证据。
      */
     @PostMapping("/{alertId}/handle")
+    @RequireRoles({Roles.RISK_ADMIN, Roles.SYS_ADMIN})
     public ApiResponse handle(@PathVariable String alertId, @RequestBody Map<String, String> body) {
         Alert alert = alertMapper.selectOne(
                 new LambdaQueryWrapper<Alert>().eq(Alert::getAlertId, alertId));

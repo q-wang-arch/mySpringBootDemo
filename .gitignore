@@ -41,3 +41,8 @@ npm-debug.log*
 
 ### WorkBuddy 本地数据（项目记忆与规则，不提交） ###
 .workbuddy/
+
+### 本地环境变量（含接口令牌等敏感值，不提交；模板见 frontend/.env.example） ###
+.env
+.env.local
+.env.*.local

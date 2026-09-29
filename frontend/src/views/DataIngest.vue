@@ -223,7 +223,7 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { agentApi } from '../api'
+import { agentApi, isAuthError } from '../api'
 import { ElMessage } from 'element-plus'
 
 const emit = defineEmits(['viewTask'])
@@ -265,7 +265,8 @@ function submitData() {
     showResult.value = true
     ElMessage.success('任务已提交，正在异步执行')
   }).catch(err => {
-    ElMessage.error(err.response?.data?.message || '提交失败')
+    // 401/403 已由 axios 拦截器统一提示，这里不重复弹窗
+    if (!isAuthError(err)) ElMessage.error(err.response?.data?.message || '提交失败')
   }).finally(() => {
     loading.value = false
   })

@@ -16,6 +16,7 @@
 - [项目结构](#项目结构)
 - [快速开始](#快速开始)
 - [API 接口](#api-接口)
+- [接口鉴权](#接口鉴权)
 - [数据模型](#数据模型)
 - [设计文档](#设计文档)
 - [实现状态](#实现状态)
@@ -202,19 +203,34 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS springbootdemo DEFAULT CHARSE
 mysql -u root -p springbootdemo < docs/schema.sql
 ```
 
-### 2. 配置数据库密码
+### 2. 配置环境变量（数据库密码 + 接口令牌）
 
-数据源密码通过环境变量注入，**仓库中不含任何明文密码**。
+数据库密码与接口令牌都通过环境变量注入，**仓库中不含任何明文密码或令牌**。
 
 在 IDEA 中：`Run → Edit Configurations → 启动类 → Environment variables`，填入：
 
 ```
 DB_PASSWORD=你的MySQL密码
+APP_TOKEN_RISK_ADMIN=自己生成的一串随机值
+APP_TOKEN_RISK_APPROVER=自己生成的一串随机值
+APP_TOKEN_API_CLIENT=自己生成的一串随机值
+APP_TOKEN_SYS_ADMIN=自己生成的一串随机值
 ```
 
-或在系统环境变量中设置 `DB_PASSWORD`。
+生成随机令牌（任选一种）：
 
-> 未配置该变量时，应用启动会报 `Could not resolve placeholder 'DB_PASSWORD'`。
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+openssl rand -base64 24
+```
+
+> **三条必读提示**
+> 1. 未配置 `DB_PASSWORD` 时启动会报 `Could not resolve placeholder 'DB_PASSWORD'`。
+> 2. **接口鉴权默认开启**（`app.auth.enabled=true`）。若一个令牌都没配，启动会打印 ERROR 日志，
+>    且所有 `/api/**` 请求返回 401——这是有意设计的"配置缺失即拒绝"，而不是默默放行。
+>    本地想临时关闭，加 `APP_AUTH_ENABLED=false` 即可（UAT / 生产环境不可关闭）。
+> 3. 前端使用的令牌不在环境变量里，而是写在 `frontend/.env.local`（见第 4 步）。
+>    未配置令牌的用户会被自动跳过（视为账号不可用），不会退化成一个"空令牌即可通过"的后门。
 
 ### 3. 启动后端
 
@@ -222,7 +238,7 @@ DB_PASSWORD=你的MySQL密码
 ./mvnw spring-boot:run
 ```
 
-服务监听 `http://localhost:8080`。验证：
+服务监听 `http://localhost:8080`。验证（`/api/hello` 属于免鉴权路径）：
 
 ```bash
 curl http://localhost:8080/api/hello
@@ -232,11 +248,13 @@ curl http://localhost:8080/api/hello
 
 ```bash
 cd frontend
+cp .env.example .env.local   # 然后填入与后端 APP_TOKEN_RISK_ADMIN 一致的令牌
 npm install
 npm run dev
 ```
 
 访问 `http://localhost:5173`。Vite 已配置 `/api` 代理到 `http://localhost:8080`，无需处理跨域。
+`frontend/.env.local` 已被 `.gitignore` 忽略，令牌不会进入仓库。
 
 ### 5. 跑通一次分析
 
@@ -293,18 +311,92 @@ npm run dev
 
 统一响应体：`{ "code": 200, "message": "...", "data": {...}, "timestamp": ... }`
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/agent/ingest` | 接收贷后数据，返回 `taskId`，异步触发分析 |
-| GET | `/api/agent/task/{taskId}` | 查询单个任务状态与执行步骤 |
-| GET | `/api/agent/tasks` | 查询任务列表（支持 `borrowerId`、`status` 过滤） |
-| GET | `/api/report/list` | 查询报告列表（支持 `borrowerId`、`riskGrade` 过滤） |
-| GET | `/api/report/{reportId}` | 查询报告详情 |
-| GET | `/api/alert/list` | 查询预警列表（支持 `borrowerId`、`status` 过滤） |
-| POST | `/api/alert/{alertId}/handle` | 处置预警工单 |
-| GET | `/api/hello` | 连通性自检 |
+| 方法 | 路径 | 说明 | 所需角色 |
+|------|------|------|----------|
+| POST | `/api/agent/ingest` | 接收贷后数据，返回 `taskId`，异步触发分析 | `API_CLIENT` / `RISK_ADMIN` / `SYS_ADMIN` |
+| GET | `/api/agent/task/{taskId}` | 查询单个任务状态与执行步骤 | `RISK_ADMIN` / `RISK_APPROVER` / `SYS_ADMIN` |
+| GET | `/api/agent/tasks` | 查询任务列表（支持 `borrowerId`、`status` 过滤） | 同上 |
+| GET | `/api/report/list` | 查询报告列表（支持 `borrowerId`、`riskGrade` 过滤） | 同上 |
+| GET | `/api/report/{reportId}` | 查询报告详情 | 同上 |
+| GET | `/api/alert/list` | 查询预警列表（支持 `borrowerId`、`status` 过滤） | 同上 |
+| POST | `/api/alert/{alertId}/handle` | 处置预警工单 | `RISK_ADMIN` / `SYS_ADMIN` |
+| GET | `/api/hello` | 连通性自检 | 免鉴权 |
 
+所有接口需在请求头携带令牌，具体方式见[接口鉴权](#接口鉴权)。
 完整字段定义见 [docs/03-接口设计文档.md](docs/03-接口设计文档.md)。
+
+---
+
+## 接口鉴权
+
+鉴权拆成两层——**认证**回答"你是谁"（失败返回 401），**授权**回答"你能不能碰这个接口"（失败返回 403）。
+两者混在一起是最常见的坑：排查时把 403 当成 401 查令牌，方向就完全跑偏了。
+
+### 令牌怎么传
+
+| 调用方 | 传递方式 | 说明 |
+|--------|----------|------|
+| 前端页面、人工调用 | `Authorization: Bearer <token>` | REST 常规写法，大小写不敏感 |
+| 源头系统对接 | `X-Auth-Token: <token>` | 少拼前缀，脚本与定时任务更省事 |
+
+### 令牌与角色
+
+配置位于 `application.properties` 的 `app.auth.*`，**令牌值一律由环境变量注入**。
+
+| 用户 | 角色 | 环境变量 | 可访问范围 |
+|------|------|----------|-----------|
+| `risk-admin` | `RISK_ADMIN` | `APP_TOKEN_RISK_ADMIN` | 报告 / 任务 / 预警查询 + 处置预警 |
+| `risk-approver` | `RISK_APPROVER` | `APP_TOKEN_RISK_APPROVER` | 报告 / 任务 / 预警查询（处置接口返回 403） |
+| `api-client` | `API_CLIENT` | `APP_TOKEN_API_CLIENT` | 仅 `POST /api/agent/ingest` |
+| `sys-admin` | `SYS_ADMIN` + 以上内部角色 | `APP_TOKEN_SYS_ADMIN` | 全部接口 |
+
+> 未设置环境变量的用户会被自动跳过（视为账号不可用），不会退化成一个"空令牌即可通过"的后门。
+
+### 实现结构
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| 认证拦截器 | `auth/AuthInterceptor.java` | 校验令牌、写入身份上下文；失败返回 401 |
+| 授权拦截器 | `auth/RoleInterceptor.java` | 读取 `@RequireRoles`、校验角色；失败返回 403 |
+| 角色声明 | `auth/RequireRoles.java` | 可标在类或方法上，**方法级优先**，多个角色满足其一即放行 |
+| 身份上下文 | `auth/AuthContext.java` | ThreadLocal 保存当前调用者，请求结束清理 |
+| 鉴权配置 | `config/AuthProperties.java` | 绑定 `app.auth.*`，启动自检并打印有效用户 |
+| 拦截器注册 | `config/WebMvcConfig.java` | 拦截 `/api/**`，认证 order=1、授权 order=2 |
+
+### 三个刻意的设计取舍
+
+1. **配置缺失即拒绝**：开关打开却没有任何有效令牌时，启动打印 ERROR，所有 `/api/**` 返回 401——
+   采用"失败即拒绝"而不是"失败即放行"。
+2. **空白令牌不算令牌**：未配置令牌的用户直接跳过，因此即使有人发一个空的 `Authorization: Bearer`，
+   也拿不到任何身份。
+3. **令牌不落仓库**：与数据库密码同一原则。前端令牌写在 `frontend/.env.local`（已 gitignore）。
+
+### 怎么验证
+
+```bash
+TOKEN=$APP_TOKEN_RISK_ADMIN
+
+curl -i http://localhost:8080/api/hello                       # 200 免鉴权
+curl -i http://localhost:8080/api/agent/tasks                 # 401 未携带令牌
+curl -i -H "Authorization: Bearer wrong" http://localhost:8080/api/agent/tasks   # 401 令牌无效
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/agent/tasks  # 200 通过
+curl -i -X POST -H "X-Auth-Token: $APP_TOKEN_RISK_APPROVER" \
+     -H "Content-Type: application/json" -d '{"handler":"张三"}' \
+     http://localhost:8080/api/alert/<alertId>/handle           # 403 角色不足
+```
+
+自动化验证（**不依赖数据库**，直接构造拦截器与 Mock 请求）：
+
+```bash
+./mvnw test -Dtest=AuthInterceptorTest
+```
+
+### 边界说明
+
+当前是"UAT 可演示的最小版本"：**静态令牌 + 内存用户表**，未实现令牌过期、刷新、吊销、
+审计日志与用户管理界面。接入真实用户体系时只需替换 `AuthProperties` 的数据来源，
+两个拦截器与 `@RequireRoles` 的业务声明都无需改动。
+
 
 ---
 
@@ -350,7 +442,8 @@ npm run dev
 - 还款 / 财务 / 风险信号三维度分析与加权评分、A–E 评级
 - 报告自动生成与查询
 - 预警规则匹配与工单处置
-- Vue 3 前端五个视图
+- 接口鉴权：静态令牌认证（401）+ 角色授权（403），拦截器 + `@RequireRoles` 注解实现
+- Vue 3 前端五个视图，axios 统一注入令牌并处理 401 / 403
 
 ### 待实现
 
@@ -362,7 +455,9 @@ npm run dev
 | 模板管理 | 报告模板与模板版本管理（FR-020） |
 | 批量导入 | CSV / Excel 批量数据接入（FR-004） |
 | 趋势分析 | 多期数据横向对比（FR-015） |
-| 接口鉴权 | 设计文档要求 Bearer Token，当前未接入认证框架 |
+| 用户体系 | 令牌过期 / 刷新 / 吊销、审计日志、用户与角色管理界面 |
+| 数据加密 | `borrower.id_card`、`phone` 的加密存储（设计中要求，当前未落库） |
+| 预警审批 | 风险审批人的"审批处置结果"接口（当前仅有处置） |
 
 ---
 

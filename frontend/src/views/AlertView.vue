@@ -68,7 +68,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { agentApi } from '../api'
+import { agentApi, isAuthError } from '../api'
 import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
@@ -99,7 +99,8 @@ function submitHandle() {
     showHandle.value = false
     loadData()
   }).catch(err => {
-    ElMessage.error(err.response?.data?.message || '处置失败')
+    // 401/403 已由 axios 拦截器统一提示，这里不重复弹窗
+    if (!isAuthError(err)) ElMessage.error(err.response?.data?.message || '处置失败')
   })
 }
 

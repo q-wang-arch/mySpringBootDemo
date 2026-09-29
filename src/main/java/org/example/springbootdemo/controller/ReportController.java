@@ -1,6 +1,8 @@
 package org.example.springbootdemo.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.example.springbootdemo.auth.RequireRoles;
+import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
 import org.example.springbootdemo.entity.Report;
 import org.example.springbootdemo.mapper.ReportMapper;
@@ -16,6 +18,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/report")
+@RequireRoles({Roles.RISK_ADMIN, Roles.RISK_APPROVER, Roles.SYS_ADMIN})
 public class ReportController {
 
     @Autowired
