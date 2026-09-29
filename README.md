@@ -207,7 +207,7 @@ mysql -u root -p springbootdemo < docs/schema.sql
 
 数据库密码与接口令牌都通过环境变量注入，**仓库中不含任何明文密码或令牌**。
 
-在 IDEA 中：`Run → Edit Configurations → 启动类 → Environment variables`，填入：
+在 IDEA 中：`Run → Edit Configurations → 选中启动类 → Environment variables`，填入：
 
 ```
 DB_PASSWORD=你的MySQL密码
@@ -216,6 +216,19 @@ APP_TOKEN_RISK_APPROVER=自己生成的一串随机值
 APP_TOKEN_API_CLIENT=自己生成的一串随机值
 APP_TOKEN_SYS_ADMIN=自己生成的一串随机值
 ```
+
+操作要点（都是实际踩过的坑）：
+
+- 该输入框支持 **`KEY=value;KEY2=value2` 分号分隔**，上面五条可以整块粘贴进去；
+  也可点输入框右侧图标用表格逐行录入，更不容易出错。
+- **不要给值加引号**。写成 `DB_PASSWORD="123456"` 时，真实密码会变成含引号的 8 位字符串，
+  报错表现为 `Access denied ... (using password: YES)`（密码传了但不对）。
+- IDEA 运行配置里的值**优先级高于 Windows 系统环境变量**。之前若在系统环境变量里配过，
+  在这里填对即可覆盖，无需去删系统变量。
+- 若选择配在 Windows 系统环境变量，**必须完全退出 IDEA 再打开**才生效——
+  IDEA 只在进程启动时读取一次系统环境变量，"Stop → Re-run" 是不够的。
+- 只跑前端看效果时，**最少只需要 `APP_TOKEN_RISK_ADMIN` 一个**；
+  要演示 403（角色不足）再加 `APP_TOKEN_RISK_APPROVER`，要模拟源头系统推送再加 `APP_TOKEN_API_CLIENT`。
 
 生成随机令牌（任选一种）：
 
