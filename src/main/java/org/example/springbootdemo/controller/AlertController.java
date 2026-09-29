@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.springbootdemo.auth.RequireRoles;
 import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
+import org.example.springbootdemo.dto.PageQuery;
 import org.example.springbootdemo.entity.Alert;
 import org.example.springbootdemo.mapper.AlertMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -38,41 +40,35 @@ public class AlertController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        LambdaQueryWrapper<Alert> wrapper = new LambdaQueryWrapper<>();
-        if (borrowerId != null && !borrowerId.isEmpty()) {
-            wrapper.eq(Alert::getBorrowerId, borrowerId);
-        }
-        if (status != null && !status.isEmpty()) {
-            wrapper.eq(Alert::getStatus, status);
-        }
-        if (level != null && !level.isEmpty()) {
-            wrapper.eq(Alert::getLevel, level);
-        }
-        wrapper.orderByDesc(Alert::getCreateTime);
+        PageQuery pageQuery = PageQuery.of(page, size);
 
-        int offset = (page - 1) * size;
-        wrapper.last("LIMIT " + offset + ", " + size);
-        List<Alert> records = alertMapper.selectList(wrapper);
+        LambdaQueryWrapper<Alert> listWrapper = alertFilter(borrowerId, status, level);
+        listWrapper.orderByDesc(Alert::getCreateTime);
+        listWrapper.last(pageQuery.toLimitClause());
+        List<Alert> records = alertMapper.selectList(listWrapper);
 
-        LambdaQueryWrapper<Alert> countWrapper = new LambdaQueryWrapper<>();
-        if (borrowerId != null && !borrowerId.isEmpty()) {
-            countWrapper.eq(Alert::getBorrowerId, borrowerId);
-        }
-        if (status != null && !status.isEmpty()) {
-            countWrapper.eq(Alert::getStatus, status);
-        }
-        if (level != null && !level.isEmpty()) {
-            countWrapper.eq(Alert::getLevel, level);
-        }
-        long total = alertMapper.selectCount(countWrapper);
+        // count 复用与 list 同一份过滤条件，避免两处条件写不一致导致 total 与 records 对不上
+        long total = alertMapper.selectCount(alertFilter(borrowerId, status, level));
 
         Map<String, Object> result = new HashMap<>();
         result.put("total", total);
-        result.put("page", page);
-        result.put("size", size);
+        result.put("page", pageQuery.getPage());
+        result.put("size", pageQuery.getSize());
         result.put("records", records);
 
         return ApiResponse.success("查询成功", result);
+    }
+
+    /**
+     * 预警列表的过滤条件——list 与 count 共用的<b>唯一来源</b>。
+     *
+     * <p>只放 where 条件，不要在这里加 order by 或 LIMIT：count 查询会复用本方法。
+     */
+    private LambdaQueryWrapper<Alert> alertFilter(String borrowerId, String status, String level) {
+        return new LambdaQueryWrapper<Alert>()
+                .eq(StringUtils.hasText(borrowerId), Alert::getBorrowerId, borrowerId)
+                .eq(StringUtils.hasText(status), Alert::getStatus, status)
+                .eq(StringUtils.hasText(level), Alert::getLevel, level);
     }
 
     /**

@@ -5,12 +5,14 @@ import org.example.springbootdemo.auth.RequireRoles;
 import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
 import org.example.springbootdemo.dto.BorrowerData;
+import org.example.springbootdemo.dto.PageQuery;
 import org.example.springbootdemo.entity.AnalysisTask;
 import org.example.springbootdemo.entity.TaskStepLog;
 import org.example.springbootdemo.mapper.AnalysisTaskMapper;
 import org.example.springbootdemo.mapper.TaskStepLogMapper;
 import org.example.springbootdemo.service.AgentIngestService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -107,31 +109,38 @@ public class AgentController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        LambdaQueryWrapper<AnalysisTask> wrapper = new LambdaQueryWrapper<>();
-        if (borrowerId != null && !borrowerId.isEmpty()) {
-            wrapper.eq(AnalysisTask::getBorrowerId, borrowerId);
-        }
-        if (status != null && !status.isEmpty()) {
-            wrapper.eq(AnalysisTask::getStatus, status);
-        }
-        wrapper.orderByDesc(AnalysisTask::getCreateTime);
+        PageQuery pageQuery = PageQuery.of(page, size);
 
-        int offset = (page - 1) * size;
-        wrapper.last("LIMIT " + offset + ", " + size);
-        List<AnalysisTask> records = analysisTaskMapper.selectList(wrapper);
+        LambdaQueryWrapper<AnalysisTask> listWrapper = taskFilter(borrowerId, status);
+        listWrapper.orderByDesc(AnalysisTask::getCreateTime);
+        listWrapper.last(pageQuery.toLimitClause());
+        List<AnalysisTask> records = analysisTaskMapper.selectList(listWrapper);
 
-        long total = analysisTaskMapper.selectCount(
-                new LambdaQueryWrapper<AnalysisTask>()
-                        .eq(borrowerId != null, AnalysisTask::getBorrowerId, borrowerId)
-                        .eq(status != null, AnalysisTask::getStatus, status));
+        // count 复用与 list 同一份过滤条件，避免两处条件写不一致导致 total 与 records 对不上
+        long total = analysisTaskMapper.selectCount(taskFilter(borrowerId, status));
 
         Map<String, Object> result = new HashMap<>();
         result.put("total", total);
-        result.put("page", page);
-        result.put("size", size);
+        result.put("page", pageQuery.getPage());
+        result.put("size", pageQuery.getSize());
         result.put("records", records);
 
         return ApiResponse.success("查询成功", result);
+    }
+
+    /**
+     * 任务列表的过滤条件——list 与 count 共用的<b>唯一来源</b>。
+     *
+     * <p>只放 where 条件，不要在这里加 order by 或 LIMIT：count 查询会复用本方法，
+     * 带上排序或分页会让总数算错。
+     *
+     * <p>用 {@code StringUtils.hasText} 而不是 {@code != null && !isEmpty()}，
+     * 空白串（"  "）也视为未传，避免拼出 {@code borrower_id = '  '} 这种永远查不到的查询。
+     */
+    private LambdaQueryWrapper<AnalysisTask> taskFilter(String borrowerId, String status) {
+        return new LambdaQueryWrapper<AnalysisTask>()
+                .eq(StringUtils.hasText(borrowerId), AnalysisTask::getBorrowerId, borrowerId)
+                .eq(StringUtils.hasText(status), AnalysisTask::getStatus, status);
     }
 }
 

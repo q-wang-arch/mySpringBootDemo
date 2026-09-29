@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.springbootdemo.auth.RequireRoles;
 import org.example.springbootdemo.auth.Roles;
 import org.example.springbootdemo.dto.ApiResponse;
+import org.example.springbootdemo.dto.PageQuery;
 import org.example.springbootdemo.entity.Report;
 import org.example.springbootdemo.mapper.ReportMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -36,42 +38,35 @@ public class ReportController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        LambdaQueryWrapper<Report> wrapper = new LambdaQueryWrapper<>();
-        if (borrowerId != null && !borrowerId.isEmpty()) {
-            wrapper.eq(Report::getBorrowerId, borrowerId);
-        }
-        if (riskGrade != null && !riskGrade.isEmpty()) {
-            wrapper.eq(Report::getRiskGrade, riskGrade);
-        }
-        if (reportPeriod != null && !reportPeriod.isEmpty()) {
-            wrapper.eq(Report::getReportPeriod, reportPeriod);
-        }
-        wrapper.orderByDesc(Report::getCreateTime);
+        PageQuery pageQuery = PageQuery.of(page, size);
 
-        int offset = (page - 1) * size;
-        wrapper.last("LIMIT " + offset + ", " + size);
-        List<Report> records = reportMapper.selectList(wrapper);
+        LambdaQueryWrapper<Report> listWrapper = reportFilter(borrowerId, riskGrade, reportPeriod);
+        listWrapper.orderByDesc(Report::getCreateTime);
+        listWrapper.last(pageQuery.toLimitClause());
+        List<Report> records = reportMapper.selectList(listWrapper);
 
-        // 总数（不带 LIMIT）
-        LambdaQueryWrapper<Report> countWrapper = new LambdaQueryWrapper<>();
-        if (borrowerId != null && !borrowerId.isEmpty()) {
-            countWrapper.eq(Report::getBorrowerId, borrowerId);
-        }
-        if (riskGrade != null && !riskGrade.isEmpty()) {
-            countWrapper.eq(Report::getRiskGrade, riskGrade);
-        }
-        if (reportPeriod != null && !reportPeriod.isEmpty()) {
-            countWrapper.eq(Report::getReportPeriod, reportPeriod);
-        }
-        long total = reportMapper.selectCount(countWrapper);
+        // count 复用与 list 同一份过滤条件，避免两处条件写不一致导致 total 与 records 对不上
+        long total = reportMapper.selectCount(reportFilter(borrowerId, riskGrade, reportPeriod));
 
         Map<String, Object> result = new HashMap<>();
         result.put("total", total);
-        result.put("page", page);
-        result.put("size", size);
+        result.put("page", pageQuery.getPage());
+        result.put("size", pageQuery.getSize());
         result.put("records", records);
 
         return ApiResponse.success("查询成功", result);
+    }
+
+    /**
+     * 报告列表的过滤条件——list 与 count 共用的<b>唯一来源</b>。
+     *
+     * <p>只放 where 条件，不要在这里加 order by 或 LIMIT：count 查询会复用本方法。
+     */
+    private LambdaQueryWrapper<Report> reportFilter(String borrowerId, String riskGrade, String reportPeriod) {
+        return new LambdaQueryWrapper<Report>()
+                .eq(StringUtils.hasText(borrowerId), Report::getBorrowerId, borrowerId)
+                .eq(StringUtils.hasText(riskGrade), Report::getRiskGrade, riskGrade)
+                .eq(StringUtils.hasText(reportPeriod), Report::getReportPeriod, reportPeriod);
     }
 
     /**
