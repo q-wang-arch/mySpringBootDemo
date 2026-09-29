@@ -223,6 +223,10 @@ APP_TOKEN_SYS_ADMIN=自己生成的一串随机值
   `The following 1 profile is active: "DB_PASSWORD=123456;APP_TOKEN_..."`，
   命令行里能看到 `-Dspring.profiles.active=DB_PASSWORD=...`——Spring 把这一整串当成了一个「profile 名」，
   变量实际**一个都没生效**。
+- **`Active profiles` 输入框必须彻底留空**——里面只要残留一个空格（肉眼几乎看不出），
+  IDEA 就会生成 `-Dspring.profiles.active= `，Spring Boot 2.7 会把空 profile 判为非法并直接中止启动：
+  `java.lang.IllegalArgumentException: Invalid profile []: must contain text`。
+  清掉那个空格即可；启动类已加保险，遇到空值会自动忽略并打印 `[boot] 检测到空的 -Dspring.profiles.active`。
 - **找不到 `Environment variables` 输入框**：新版 IDEA 默认隐藏该字段，
   需点 `Modify options`（快捷键 `Alt+M`）→ 勾选 `Environment variables` 才会出现。
 - 该输入框支持 **`KEY=value;KEY2=value2` 分号分隔**，上面五条可以整块粘贴进去；
