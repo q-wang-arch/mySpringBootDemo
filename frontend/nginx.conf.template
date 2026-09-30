@@ -1,0 +1,55 @@
+# nginx 配置模板：容器启动时由 envsubst 渲染成 /etc/nginx/conf.d/default.conf
+#
+# 只有 ${BACKEND_UPSTREAM} 和 ${APP_TOKEN} 会被替换成环境变量值；
+# $host、$uri、$remote_addr 等 nginx 内置变量原样保留。
+
+server {
+    listen 80;
+    server_name _;
+
+    charset utf-8;
+
+    # 数据接入接口会推整批贷后数据，放宽请求体上限
+    client_max_body_size 32m;
+
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 容器自身探活，不经过后端（后端健康由 backend 容器自己的 healthcheck 负责）
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    # 前端静态资源。try_files 里的 /index.html 兜底是单页应用路由必需的：
+    # 直接访问 /tasks 这类前端路由时磁盘上并没有对应文件，需回落到入口页
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 反向代理后端。proxy_pass 后面不带路径，因此原始 URI（/api/xxx）原样转发，
+    # 与后端接口的实际路径一致
+    location /api/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 令牌在此统一注入，前端 bundle 里不含任何令牌。
+        # 客户端若自带 Authorization 会被这一行覆盖 —— 这是有意为之：
+        # 部署环境的令牌只由运维通过环境变量控制，不交给浏览器决定。
+        proxy_set_header Authorization "Bearer ${APP_TOKEN}";
+
+        # 后端会同步跑分析流程，默认 60s 读超时不够用
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+}

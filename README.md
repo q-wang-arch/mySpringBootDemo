@@ -15,6 +15,7 @@
 - [风险评分与评级](#风险评分与评级)
 - [项目结构](#项目结构)
 - [快速开始](#快速开始)
+- [Docker 部署](#docker-部署可选)
 - [API 接口](#api-接口)
 - [接口鉴权](#接口鉴权)
 - [数据模型](#数据模型)
@@ -189,10 +190,14 @@ springbootdemo/
 
 ### 环境要求
 
+用 IDEA + vite 直接开发时：
+
 - JDK 1.8+
 - Maven 3.6+
 - Node.js 16+
 - MySQL 8.0
+
+若改用 Docker 一键启动（见 [Docker 部署](#docker-部署可选)），则只需要安装 Docker Desktop，上面四项都不必在本机安装。
 
 ### 1. 初始化数据库
 
@@ -353,6 +358,71 @@ npm run dev
   }
 }
 ```
+
+---
+
+## Docker 部署（可选）
+
+本地开发仍推荐上面的 IDEA + vite 方式（改代码即时生效，不必重新构建镜像）。Docker 的价值在**交付到别的机器**时才体现：把"在我这儿是好的"这一类环境问题整体消掉。
+
+### 前置
+
+- Docker Desktop（自带 `docker compose`）
+
+### 一键启动
+
+```bash
+cp .env.example .env      # 填写 DB_PASSWORD 与四个 APP_TOKEN_*
+docker compose up -d --build
+```
+
+首次构建较慢（拉基础镜像 + 下载全部依赖），之后改代码重新构建会快很多。
+
+| 服务 | 访问地址 | 说明 |
+|---|---|---|
+| 前端 | http://localhost:8081 | nginx 托管静态资源，并反代 `/api` 到后端 |
+| 后端 | http://localhost:8080 | 直连可绕过 nginx 单独调试接口 |
+| MySQL | localhost:3307 | **故意不用 3306**，避让本机已装的 MySQL |
+
+`docker compose ps` 中三个服务都应为 `healthy`；MySQL 首次初始化需 30 秒左右。
+
+### 四个刻意的设计取舍
+
+**1. 令牌不写进前端 bundle，改由 nginx 注入**
+
+Vite 的环境变量（`VITE_API_TOKEN`）是**构建时**被替换进代码的常量。若在构建镜像时传入，会有两个后果：镜像被钉死在某套令牌上、换环境必须重新构建；令牌随静态资源下发到浏览器，开发者工具里一览无余。
+
+因此前端镜像**刻意不注入**该变量，改由 `frontend/nginx.conf.template` 在转发 `/api/` 时统一附加 `Authorization` 头。令牌只存在于容器环境变量里，换令牌改 `.env` 后 `docker compose up -d` 即可，无需重新构建。
+
+**2. 数据源地址靠环境变量覆盖，代码零改动**
+
+`application.properties` 里写的是 `localhost:3306`，而容器内 `localhost` 指向容器自身。compose 用 `SPRING_DATASOURCE_URL` 把它覆盖成 `mysql:3306`（compose 服务名）——Spring Boot 的宽松绑定会自动映射，不必改一行代码。
+
+**3. 建表脚本直接挂载仓库里的 `docs/schema.sql`**
+
+不复制成第二份，避免两份 DDL 不同步。它在数据卷为空时（即首次启动）自动执行一次。
+
+> 注意：`docs/111.sql` 是 PostgreSQL 语法的历史遗留文件（内含 `search_path`、5432 端口），**不能**用于本项目的 MySQL 容器。
+
+**4. 敏感变量用 `${VAR:?}` 强制校验**
+
+`.env` 漏填 `DB_PASSWORD` 时 compose 会直接报错中止，而不是静默起一个空密码的数据库。
+
+### 常用命令
+
+```bash
+docker compose ps                     # 查看状态
+docker compose logs -f backend        # 跟踪后端日志
+docker compose up -d --build backend  # 只重建后端
+docker compose down                   # 停止并删除容器（数据卷保留）
+docker compose down -v                # 连数据卷一起删（数据库回到初始状态）
+```
+
+### 已知限制
+
+- 本套配置**尚未在真实 Docker 环境验证**（开发机未安装 Docker），首次 `up` 若报错请把日志发出来。
+- 国内拉取 Docker Hub 基础镜像可能很慢，建议在 Docker Desktop 中配置镜像加速器。
+- 前端页面固定使用单一身份调接口（默认风险管理员）。要换身份，改 `.env` 里的 `FRONTEND_API_TOKEN` 后重启前端容器。
 
 ---
 

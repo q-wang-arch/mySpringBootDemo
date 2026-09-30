@@ -1,0 +1,18 @@
+# 前端构建上下文排除清单
+
+# 依赖：容器里会用 npm ci 按 lock 文件重新装，且必须在 Linux 下装
+# （宿主机的 node_modules 可能含 Windows 平台二进制，拷进去会直接跑不起来）
+node_modules/
+
+# 构建产物：容器内重新构建
+dist/
+
+# 敏感文件：绝不能进镜像。
+# .env.local 里存着 VITE_API_TOKEN，若被拷进构建阶段，
+# Vite 会在构建时把令牌写死进 bundle，随静态资源泄露到浏览器
+.env
+.env.local
+.env.*.local
+
+*.log
+npm-debug.log*

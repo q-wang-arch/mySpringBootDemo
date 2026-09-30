@@ -1,0 +1,37 @@
+# 构建上下文排除清单（仅影响镜像构建，不影响宿主机上的文件）
+#
+# 上下文越小，构建越快：Docker 每次构建都要把上下文打包发给 daemon。
+
+# 构建产物：镜像内会重新编译，拷进来只会白白撑大上下文
+target/
+
+# 前端有自己独立的构建上下文（见 docker-compose.yml 里 frontend.build.context），
+# 后端镜像完全用不到它。这里有 6500+ 个文件，是上下文膨胀的主因。
+frontend/
+
+# 文档
+docs/
+README.md
+HELP.md
+
+# 版本控制与 IDE
+.git/
+.gitignore
+.gitattributes
+.idea/
+*.iml
+.vscode/
+
+# 本地数据与日志
+.workbuddy/
+*.log
+
+# 敏感文件：绝不允许进入镜像层（镜像层是可被拉取和翻查的）
+.env
+.env.local
+.env.*.local
+
+# Maven 包装器：构建镜像自带 Maven，用不上
+mvnw
+mvnw.cmd
+.mvn/

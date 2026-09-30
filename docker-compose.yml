@@ -1,0 +1,114 @@
+# 贷后智能体 - 一键起全套（MySQL + 后端 + 前端）
+#
+# 使用前：
+#   cp .env.example .env      （.env 已被 .gitignore 忽略）
+#   填写 .env 里的密码与令牌，然后：
+#   docker compose up -d --build
+#
+# 变量语法 ${VAR:?提示} 表示"必须显式赋值，否则 compose 直接报错中止"。
+# 这是有意的：漏配令牌时静默起一个所有接口都 401 的服务，
+# 比启动时明确报错难排查得多。
+
+name: springbootdemo
+
+services:
+  # ----------------------------------------------------------
+  # 数据库
+  # ----------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: pcd-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD未设置，请先复制.env.example为.env并填写}
+      MYSQL_DATABASE: springbootdemo
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --default-time-zone=+08:00
+      # 后端 Hikari 池上限 10，这里给足余量
+      - --max-connections=200
+    ports:
+      # 默认映射到 3307 而不是 3306：多数开发机已装本地 MySQL 占用 3306，
+      # 直接映射会因端口冲突启动失败
+      - "${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 初始化脚本只在数据卷为空时（即首次启动）执行一次。
+      # 直接挂载仓库里的 DDL 而不复制一份，保证建表语句只有单一来源
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - app-net
+
+  # ----------------------------------------------------------
+  # 后端
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: springbootdemo-backend:latest
+    container_name: pcd-backend
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      # application.properties 里写的是 localhost:3306，容器里 localhost 指向容器自身，
+      # 必须覆盖成 compose 的服务名 mysql。Spring Boot 的宽松绑定会把
+      # SPRING_DATASOURCE_URL 映射到 spring.datasource.url，无需改代码
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/springbootdemo?useSSL=false&useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      APP_AUTH_ENABLED: ${APP_AUTH_ENABLED:-true}
+      APP_TOKEN_RISK_ADMIN: ${APP_TOKEN_RISK_ADMIN:-}
+      APP_TOKEN_RISK_APPROVER: ${APP_TOKEN_RISK_APPROVER:-}
+      APP_TOKEN_API_CLIENT: ${APP_TOKEN_API_CLIENT:-}
+      APP_TOKEN_SYS_ADMIN: ${APP_TOKEN_SYS_ADMIN:-}
+    ports:
+      # 若本地 IDEA 正跑着 8080，把 .env 里的 BACKEND_HOST_PORT 改成 18080 之类
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        # 等数据库真正可接受连接，而不是"容器已启动"（MySQL 初始化要几十秒，
+        # 只判断容器状态会导致后端启动时连不上库）
+        condition: service_healthy
+    networks:
+      - app-net
+
+  # ----------------------------------------------------------
+  # 前端
+  # ----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: springbootdemo-frontend:latest
+    container_name: pcd-frontend
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      BACKEND_UPSTREAM: backend:8080
+      # 由 nginx 在转发 /api/ 时注入，前端 bundle 里不含令牌。
+      # 默认复用风险管理员的令牌；要用其他角色，改这一行即可（无需重新构建镜像）
+      APP_TOKEN: ${FRONTEND_API_TOKEN:-${APP_TOKEN_RISK_ADMIN:-}}
+    ports:
+      - "${FRONTEND_HOST_PORT:-8081}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-net
+
+volumes:
+  # 命名卷：容器删了数据还在。若用绑定挂载到 Windows 目录，
+  # InnoDB 在部分文件系统上的表现不稳定，故不用 ./data 这种写法
+  mysql-data:
+
+networks:
+  app-net:
+    driver: bridge
